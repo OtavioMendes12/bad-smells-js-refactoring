@@ -1,69 +1,112 @@
+// src/ReportGenerator.refactored.js
+// Refatoração focada em reduzir duplicações, isolar responsabilidades (SRP) e diminuir complexidade cognitiva.
+// Técnicas aplicadas: Extract Method, Decompose Conditional, Strategy (renderers por tipo), Guard Clauses.
+
 export class ReportGenerator {
   constructor(database) {
     this.db = database;
   }
 
-  /**
-   * Gera um relatório de itens baseado no tipo e no usuário.
-   * - Admins veem tudo.
-   * - Users comuns só veem itens com valor <= 500.
-   */
   generateReport(reportType, user, items) {
-    let report = '';
+    const renderer = getRenderer(reportType);
+    const isAdmin = user?.role === 'ADMIN';
+    const visibleItems = filterItemsByRole(items, user);
+
     let total = 0;
+    renderer.begin(user);
 
-    // --- Seção do Cabeçalho ---
-    if (reportType === 'CSV') {
-      report += 'ID,NOME,VALOR,USUARIO\n';
-    } else if (reportType === 'HTML') {
-      report += '<html><body>\n';
-      report += '<h1>Relatório</h1>\n';
-      report += `<h2>Usuário: ${user.name}</h2>\n`;
-      report += '<table>\n';
-      report += '<tr><th>ID</th><th>Nome</th><th>Valor</th></tr>\n';
+    for (const item of visibleItems) {
+      const priority = isAdmin && item.value > 1000; // regra exclusiva para admin
+      renderer.row(item, user, priority);
+      total += item.value;
     }
 
-    // --- Seção do Corpo (Alta Complexidade) ---
-    for (const item of items) {
-      if (user.role === 'ADMIN') {
-        // Admins veem todos os itens
-        if (item.value > 1000) {
-          // Lógica bônus para admins
-          item.priority = true;
-        }
-
-        if (reportType === 'CSV') {
-          report += `${item.id},${item.name},${item.value},${user.name}\n`;
-          total += item.value;
-        } else if (reportType === 'HTML') {
-          const style = item.priority ? 'style="font-weight:bold;"' : '';
-          report += `<tr ${style}><td>${item.id}</td><td>${item.name}</td><td>${item.value}</td></tr>\n`;
-          total += item.value;
-        }
-      } else if (user.role === 'USER') {
-        // Users comuns só veem itens de valor baixo
-        if (item.value <= 500) {
-          if (reportType === 'CSV') {
-            report += `${item.id},${item.name},${item.value},${user.name}\n`;
-            total += item.value;
-          } else if (reportType === 'HTML') {
-            report += `<tr><td>${item.id}</td><td>${item.name}</td><td>${item.value}</td></tr>\n`;
-            total += item.value;
-          }
-        }
-      }
-    }
-
-    // --- Seção do Rodapé ---
-    if (reportType === 'CSV') {
-      report += '\nTotal,,\n';
-      report += `${total},,\n`;
-    } else if (reportType === 'HTML') {
-      report += '</table>\n';
-      report += `<h3>Total: ${total}</h3>\n`;
-      report += '</body></html>\n';
-    }
-
-    return report.trim();
+    renderer.footer(total);
+    return renderer.output().trim();
   }
+}
+
+// --------- Domínio (regras de visibilidade) ---------
+function filterItemsByRole(items, user) {
+  if (!user || !Array.isArray(items)) return [];
+  if (user.role === 'ADMIN') return items;
+  if (user.role === 'USER') return items.filter(i => i.value <= 500);
+  // Regra de fallback: usuários desconhecidos não veem nada
+  return [];
+}
+
+// --------- Renderers (Strategy) ---------
+function getRenderer(reportType) {
+  switch (reportType) {
+    case 'CSV':
+      return new CsvRenderer();
+    case 'HTML':
+      return new HtmlRenderer();
+    default:
+      throw new Error(`Unsupported report type: ${reportType}`);
+  }
+}
+
+class CsvRenderer {
+  constructor() {
+    this._buf = [];
+  }
+  begin(user) {
+    this._buf.push('ID,NOME,VALOR,USUARIO');
+  }
+  row(item, user /* , priority */) {
+    this._buf.push(`${item.id},${escapeCsv(item.name)},${item.value},${user.name}`);
+  }
+  footer(total) {
+    // Mantém compatibilidade de estrutura com versão original
+    this._buf.push('');
+    this._buf.push('Total,,');
+    this._buf.push(`${total},,`);
+  }
+  output() {
+    return this._buf.join('\n');
+  }
+}
+
+class HtmlRenderer {
+  constructor() {
+    this._buf = [];
+  }
+  begin(user) {
+    this._buf.push('<html><body>');
+    this._buf.push('<h1>Relatório</h1>');
+    this._buf.push(`<h2>Usuário: ${escapeHtml(user.name)}</h2>`);
+    this._buf.push('<table>');
+    this._buf.push('<tr><th>ID</th><th>Nome</th><th>Valor</th></tr>');
+  }
+  row(item, user, priority) {
+    const style = priority ? ' style="font-weight:bold;"' : '';
+    this._buf.push(`<tr${style}><td>${escapeHtml(item.id)}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.value)}</td></tr>`);
+  }
+  footer(total) {
+    this._buf.push('</table>');
+    this._buf.push(`<h3>Total: ${escapeHtml(total)}</h3>`);
+    this._buf.push('</body></html>');
+  }
+  output() {
+    return this._buf.join('\n');
+  }
+}
+
+// Utilitários simples de escape
+function escapeHtml(v) {
+  return String(v)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function escapeCsv(v) {
+  const s = String(v ?? '');
+  if (/[",\n]/.test(s)) {
+    return `"${s.replaceAll('"', '""')}"`;
+  }
+  return s;
 }

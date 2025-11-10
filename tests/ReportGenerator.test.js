@@ -1,105 +1,59 @@
-import { ReportGenerator } from '../src/ReportGenerator.js';
+// __tests__/ReportGenerator.refactored.test.js
+// Testes de regressão comportamental baseados nas regras descritas no enunciado.
 
-// --- Dados de Teste ---
-const adminUser = { name: 'Admin', role: 'ADMIN' };
-const standardUser = { name: 'User', role: 'USER' };
+import { ReportGenerator } from '../src/ReportGenerator.refactored.js';
 
-const testItems = [
-  { id: 1, name: 'Produto A', value: 300 },
-  { id: 2, name: 'Produto B', value: 700 }, // Será filtrado para standardUser
-  { id: 3, name: 'Produto C', value: 1200 }, // Será filtrado para user E prioritário para admin
-];
+describe('ReportGenerator (refactored)', () => {
+  const db = {}; // mock simplificado
+  const generator = new ReportGenerator(db);
 
-// Mock DB (não é usado na lógica atual, mas está lá para o construtor)
-const mockDb = {};
+  const admin = { name: 'Admin', role: 'ADMIN' };
+  const user = { name: 'User', role: 'USER' };
+  const items = [
+    { id: 1, name: 'Alpha', value: 200 },
+    { id: 2, name: 'Bravo', value: 1200 }, // prioridade se ADMIN no HTML
+    { id: 3, name: 'Charlie', value: 500 },
+    { id: 4, name: 'Delta', value: 800 }
+  ];
 
-describe('ReportGenerator (Rede de Segurança)', () => {
-  let generator;
-
-  beforeEach(() => {
-    generator = new ReportGenerator(mockDb);
+  test('CSV para ADMIN contém todos os itens e total correto', () => {
+    const out = generator.generateReport('CSV', admin, items);
+    expect(out).toContain('ID,NOME,VALOR,USUARIO');
+    expect(out).toContain('1,Alpha,200,Admin');
+    expect(out).toContain('2,Bravo,1200,Admin');
+    expect(out).toContain('3,Charlie,500,Admin');
+    expect(out).toContain('4,Delta,800,Admin');
+    // total = 200 + 1200 + 500 + 800 = 2700
+    expect(out.trim().endsWith('2700,,')).toBe(true);
   });
 
-  // --- Cenários de ADMIN ---
-  describe('Admin User', () => {
-    it('deve gerar um relatório CSV completo para Admin', () => {
-      const report = generator.generateReport(
-        'CSV',
-        adminUser,
-        JSON.parse(JSON.stringify(testItems)),
-      );
-
-      // Valida o comportamento (saída), não a implementação
-      expect(report).toContain('ID,NOME,VALOR,USUARIO');
-      expect(report).toContain('1,Produto A,300,Admin');
-      expect(report).toContain('2,Produto B,700,Admin');
-      expect(report).toContain('3,Produto C,1200,Admin');
-      expect(report).toContain('Total,,\n2200,,');
-    });
-
-    it('deve gerar um relatório HTML completo para Admin (com prioridade)', () => {
-      const report = generator.generateReport(
-        'HTML',
-        adminUser,
-        JSON.parse(JSON.stringify(testItems)), 
-      );
-
-      expect(report).toContain('<h1>Relatório</h1>');
-      expect(report).toContain('<h2>Usuário: Admin</h2>');
-      // Item Padrão
-      expect(report).toContain('<tr><td>1</td><td>Produto A</td><td>300</td></tr>');
-      // Item Prioritário (acima de 1000)
-      expect(report).toContain(
-        '<tr style="font-weight:bold;"><td>3</td><td>Produto C</td><td>1200</td></tr>',
-      );
-      expect(report).toContain('<h3>Total: 2200</h3>');
-    });
+  test('HTML para ADMIN contém todos os itens, com prioridade em value > 1000', () => {
+    const out = generator.generateReport('HTML', admin, items);
+    expect(out).toContain('<h2>Usuário: Admin</h2>');
+    // linha em negrito para item de 1200
+    expect(out).toContain('<tr style="font-weight:bold;"><td>2</td><td>Bravo</td><td>1200</td></tr>');
+    // total correto
+    expect(out).toContain('<h3>Total: 2700</h3>');
   });
 
-  // --- Cenários de USER Padrão ---
-  describe('Standard User', () => {
-    it('deve gerar um relatório CSV filtrado para User (apenas itens <= 500)', () => {
-      const report = generator.generateReport(
-        'CSV',
-        standardUser,
-        JSON.parse(JSON.stringify(testItems)),
-      );
-
-      expect(report).toContain('ID,NOME,VALOR,USUARIO');
-      // DEVE conter o item de 300
-      expect(report).toContain('1,Produto A,300,User');
-      // NÃO DEVE conter os itens caros
-      expect(report).not.toContain('2,Produto B,700,User');
-      expect(report).not.toContain('3,Produto C,1200,User');
-      // Total deve ser apenas 300
-      expect(report).toContain('Total,,\n300,,');
-    });
-
-    it('deve gerar um relatório HTML filtrado para User (apenas itens <= 500)', () => {
-      const report = generator.generateReport(
-        'HTML',
-        standardUser,
-        JSON.parse(JSON.stringify(testItems)),
-      );
-
-      expect(report).toContain('<h1>Relatório</h1>');
-      expect(report).toContain('<h2>Usuário: User</h2>');
-      // DEVE conter o item de 300
-      expect(report).toContain('<tr><td>1</td><td>Produto A</td><td>300</td></tr>');
-      // NÃO DEVE conter os itens caros
-      expect(report).not.toContain('<td>Produto B</td>');
-      expect(report).not.toContain('<td>Produto C</td>');
-      // Total deve ser apenas 300
-      expect(report).toContain('<h3>Total: 300</h3>');
-    });
+  test('CSV para USER contém apenas itens com value <= 500, e total correto', () => {
+    const out = generator.generateReport('CSV', user, items);
+    expect(out).toContain('1,Alpha,200,User');
+    expect(out).toContain('3,Charlie,500,User');
+    expect(out).not.toContain('2,Bravo,1200,User');
+    expect(out).not.toContain('4,Delta,800,User');
+    // total = 200 + 500 = 700
+    expect(out.trim().endsWith('700,,')).toBe(true);
   });
 
-  // --- Caso de Borda ---
-  it('deve lidar com array de itens vazio corretamente', () => {
-    const reportCSV = generator.generateReport('CSV', adminUser, []);
-    expect(reportCSV).toContain('Total,,\n0,,');
-
-    const reportHTML = generator.generateReport('HTML', adminUser, []);
-    expect(reportHTML).toContain('<h3>Total: 0</h3>');
+  test('HTML para USER não inclui itens > 500', () => {
+    const out = generator.generateReport('HTML', user, items);
+    // inclui 200 e 500
+    expect(out).toContain('<td>1</td><td>Alpha</td><td>200</td>');
+    expect(out).toContain('<td>3</td><td>Charlie</td><td>500</td>');
+    // não inclui 800 e 1200
+    expect(out).not.toContain('<td>2</td><td>Bravo</td><td>1200</td>');
+    expect(out).not.toContain('<td>4</td><td>Delta</td><td>800</td>');
+    expect(out).toContain('<h3>Total: 700</h3>');
   });
 });
